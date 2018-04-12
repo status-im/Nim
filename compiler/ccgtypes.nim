@@ -14,6 +14,8 @@
 import sighashes
 from lowerings import createObj
 
+proc genProcHeader(m: BModule, prc: PSym): Rope
+
 proc isKeyword(w: PIdent): bool =
   # Nim and C++ share some keywords
   # it's more efficient to test the whole Nim keywords range
@@ -267,10 +269,6 @@ proc addAbiCheck(m: BModule, t: PType, name: Rope) =
   if isDefined("checkabi"):
     addf(m.s[cfsTypeInfo], "NIM_CHECK_SIZE($1, $2);$n", [name, rope(getSize(t))])
 
-proc getTempName(m: BModule): Rope =
-  result = m.tmpBase & rope(m.labels)
-  inc m.labels
-
 proc ccgIntroducedPtr(s: PSym): bool =
   var pt = skipTypes(s.typ, typedescInst)
   assert skResult != s.kind
@@ -316,8 +314,13 @@ proc getSimpleTypeDesc(m: BModule, typ: PType): Rope =
   of tyPointer:
     result = typeNameOrLiteral(m, typ, "void*")
   of tyString:
-    discard cgsym(m, "NimStringDesc")
-    result = typeNameOrLiteral(m, typ, "NimStringDesc*")
+    case detectStrVersion(m)
+    of 2:
+      discard cgsym(m, "string")
+      result = typeNameOrLiteral(m, typ, "NimStringV2")
+    else:
+      discard cgsym(m, "NimStringDesc")
+      result = typeNameOrLiteral(m, typ, "NimStringDesc*")
   of tyCString: result = typeNameOrLiteral(m, typ, "NCSTRING")
   of tyBool: result = typeNameOrLiteral(m, typ, "NIM_BOOL")
   of tyChar: result = typeNameOrLiteral(m, typ, "NIM_CHAR")
@@ -368,6 +371,8 @@ proc getTypeForward(m: BModule, typ: PType; sig: SigHash): Rope =
     if not isImportedType(concrete):
       addf(m.s[cfsForwardTypes], getForwardStructFormat(m),
           [structOrUnion(typ), result])
+    else:
+      pushType(m, concrete)
     doAssert m.forwTypeCache[sig] == result
   else: internalError("getTypeForward(" & $typ.kind & ')')
 
@@ -570,7 +575,15 @@ proc getRecordDesc(m: BModule, typ: PType, name: Rope,
       appcg(m, result, " : public $1 {$n",
                       [getTypeDescAux(m, typ.sons[0].skipTypes(skipPtrs), check)])
       if typ.isException:
-        appcg(m, result, "virtual void raise() {throw this;}$n") # required for polymorphic exceptions
+        appcg(m, result, "virtual void raise() {throw *this;}$n") # required for polymorphic exceptions
+        if typ.sym.magic == mException:
+          # Add cleanup destructor to Exception base class
+          appcg(m, result, "~$1() {if(this->raise_id) popCurrentExceptionEx(this->raise_id);}$n", [name])
+          # hack: forward declare popCurrentExceptionEx() on top of type description,
+          # proper request to generate popCurrentExceptionEx not possible for 2 reasons:
+          # generated function will be below declared Exception type and circular dependency
+          # between Exception and popCurrentExceptionEx function
+          result = genProcHeader(m, magicsys.getCompilerProc("popCurrentExceptionEx")) & ";" & rnl & result
       hasField = true
     else:
       appcg(m, result, " {$n  $1 Sup;$n",
@@ -665,7 +678,6 @@ proc getTypeDescAux(m: BModule, origTyp: PType, check: var IntSet): Rope =
         let name = getTypeForward(m, et, hashType et)
         result = name & star
         m.typeCache[sig] = result
-        pushType(m, et)
     of tySequence:
       # no restriction! We have a forward declaration for structs
       let name = getTypeForward(m, et, hashType et)
@@ -841,6 +853,13 @@ proc getTypeDescAux(m: BModule, origTyp: PType, check: var IntSet): Rope =
       # always call for sideeffects:
       assert t.kind != tyTuple
       discard getRecordDesc(m, t, result, check)
+      # The resulting type will include commas and these won't play well
+      # with the C macros for defining procs such as N_NIMCALL. We must
+      # create a typedef for the type and use it in the proc signature:
+      let typedefName = ~"TY" & $sig
+      addf(m.s[cfsTypes], "typedef $1 $2;$n", [result, typedefName])
+      m.typeCache[sig] = typedefName
+      result = typedefName
     else:
       when false:
         if t.sym != nil and t.sym.name.s == "KeyValuePair":
@@ -1188,10 +1207,6 @@ proc fakeClosureType(owner: PSym): PType =
   r.rawAddSon(obj)
   result.rawAddSon(r)
 
-type
-  TTypeInfoReason = enum  ## for what do we need the type info?
-    tiNew,                ## for 'new'
-
 include ccgtrav
 
 proc genDeepCopyProc(m: BModule; s: PSym; result: Rope) =
@@ -1252,7 +1267,7 @@ proc genTypeInfo(m: BModule, t: PType; info: TLineInfo): Rope =
   of tySequence, tyRef, tyOptAsRef:
     genTypeInfoAux(m, t, t, result, info)
     if gSelectedGC >= gcMarkAndSweep:
-      let markerProc = genTraverseProc(m, origType, sig, tiNew)
+      let markerProc = genTraverseProc(m, origType, sig)
       addf(m.s[cfsTypeInit3], "$1.marker = $2;$n", [result, markerProc])
   of tyPtr, tyRange: genTypeInfoAux(m, t, t, result, info)
   of tyArray: genArrayInfo(m, t, result, info)

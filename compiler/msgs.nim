@@ -134,7 +134,7 @@ type
     hintProcessing, hintCodeBegin, hintCodeEnd, hintConf, hintPath,
     hintConditionAlwaysTrue, hintName, hintPattern,
     hintExecuting, hintLinking, hintDependency,
-    hintSource, hintStackTrace, hintGCStats,
+    hintSource, hintPerformance, hintStackTrace, hintGCStats,
     hintUser, hintUserRaw
 
 const
@@ -357,7 +357,9 @@ const
     errXExpectsTwoArguments: "\'$1\' expects two arguments",
     errXExpectsObjectTypes: "\'$1\' expects object types",
     errXcanNeverBeOfThisSubtype: "\'$1\' can never be of this subtype",
-    errTooManyIterations: "interpretation requires too many iterations",
+    errTooManyIterations: "interpretation requires too many iterations; " &
+      "if you are sure this is not a bug in your code edit " &
+      "compiler/vmdef.MaxLoopIterations and rebuild the compiler",
     errCannotInterpretNodeX: "cannot evaluate \'$1\'",
     errFieldXNotFound: "field \'$1\' cannot be found",
     errInvalidConversionFromTypeX: "invalid conversion from type \'$1\'",
@@ -436,6 +438,7 @@ const
     hintLinking: "",
     hintDependency: "$1",
     hintSource: "$1",
+    hintPerformance: "$1",
     hintStackTrace: "$1",
     hintGCStats: "$1",
     hintUser: "$1",
@@ -458,7 +461,7 @@ const
     "XDeclaredButNotUsed", "ConvToBaseNotNeeded", "ConvFromXtoItselfNotNeeded",
     "ExprAlwaysX", "QuitCalled", "Processing", "CodeBegin", "CodeEnd", "Conf",
     "Path", "CondTrue", "Name", "Pattern", "Exec", "Link", "Dependency",
-    "Source", "StackTrace", "GCStats",
+    "Source", "Performance", "StackTrace", "GCStats",
     "User", "UserRaw"]
 
 const

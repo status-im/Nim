@@ -483,6 +483,7 @@ type
       trace: string
     else:
       trace: seq[StackTraceEntry]
+    raise_id: uint # set when exception is raised
     up: ref Exception # used for stacking exceptions. Not exported!
 
   SystemError* = object of Exception ## \
@@ -616,6 +617,11 @@ type
     ## Raised on dereferences of ``nil`` pointers.
     ##
     ## This is only raised if the ``segfaults.nim`` module was imported!
+
+when defined(nimNewRuntime):
+  type
+    MoveError* = object of SystemError ## \
+      ## Raised on attempts to re-sink an already consumed ``sink`` parameter.
 
 {.deprecated: [TObject: RootObj, PObject: RootRef, TEffect: RootEffect,
   FTime: TimeEffect, FIO: IOEffect, FReadIO: ReadIOEffect,
@@ -1372,7 +1378,8 @@ const
   hostCPU* {.magic: "HostCPU".}: string = ""
     ## a string that describes the host CPU. Possible values:
     ## "i386", "alpha", "powerpc", "powerpc64", "powerpc64el", "sparc",
-    ## "amd64", "mips", "mipsel", "arm", "arm64", "mips64", "mips64el".
+    ## "amd64", "mips", "mipsel", "arm", "arm64", "mips64", "mips64el",
+    ## "riscv64".
 
   seqShallowFlag = low(int)
   strlitFlag = 1 shl (sizeof(int)*8 - 2) # later versions of the codegen \
@@ -1774,7 +1781,7 @@ when not defined(nimscript):
     proc createU*(T: typedesc, size = 1.Positive): ptr T {.inline, benign.} =
       ## allocates a new memory block with at least ``T.sizeof * size``
       ## bytes. The block has to be freed with ``resize(block, 0)`` or
-      ## ``free(block)``. The block is not initialized, so reading
+      ## ``dealloc(block)``. The block is not initialized, so reading
       ## from it before writing to it is undefined behaviour!
       ## The allocated memory belongs to its allocating thread!
       ## Use `createSharedU` to allocate from a shared heap.
@@ -1789,7 +1796,7 @@ when not defined(nimscript):
     proc create*(T: typedesc, size = 1.Positive): ptr T {.inline, benign.} =
       ## allocates a new memory block with at least ``T.sizeof * size``
       ## bytes. The block has to be freed with ``resize(block, 0)`` or
-      ## ``free(block)``. The block is initialized with all bytes
+      ## ``dealloc(block)``. The block is initialized with all bytes
       ## containing zero, so it is somewhat safer than ``createU``.
       ## The allocated memory belongs to its allocating thread!
       ## Use `createShared` to allocate from a shared heap.
@@ -1807,7 +1814,7 @@ when not defined(nimscript):
       ## grows or shrinks a given memory block. If p is **nil** then a new
       ## memory block is returned. In either way the block has at least
       ## ``T.sizeof * newSize`` bytes. If ``newSize == 0`` and p is not
-      ## **nil** ``resize`` calls ``free(p)``. In other cases the block
+      ## **nil** ``resize`` calls ``dealloc(p)``. In other cases the block
       ## has to be freed with ``free``. The allocated memory belongs to
       ## its allocating thread!
       ## Use `resizeShared` to reallocate from a shared heap.
@@ -3730,7 +3737,7 @@ proc astToStr*[T](x: T): string {.magic: "AstToStr", noSideEffect.}
   ## for debugging.
 
 proc instantiationInfo*(index = -1, fullPaths = false): tuple[
-  filename: string, line: int] {. magic: "InstantiationInfo", noSideEffect.}
+  filename: string, line: int, column: int] {. magic: "InstantiationInfo", noSideEffect.}
   ## provides access to the compiler's instantiation stack line information
   ## of a template.
   ##
@@ -4131,3 +4138,13 @@ when defined(cpp) and appType != "lib" and not defined(js) and
     stderr.write trace & "Error: unhandled exception: " & ex.msg &
                  " [" & $ex.name & "]\n"
     quit 1
+
+when not defined(js):
+  proc toOpenArray*[T](x: seq[T]; first, last: int): openarray[T] {.
+    magic: "Slice".}
+  proc toOpenArray*[T](x: openarray[T]; first, last: int): openarray[T] {.
+    magic: "Slice".}
+  proc toOpenArray*[I, T](x: array[I, T]; first, last: I): openarray[T] {.
+    magic: "Slice".}
+  proc toOpenArray*(x: string; first, last: int): openarray[char] {.
+    magic: "Slice".}
