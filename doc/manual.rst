@@ -4789,6 +4789,50 @@ scope is the default.
 ``bind`` statements only make sense in templates and generics.
 
 
+Delegating bind statements
+--------------------------
+
+The following example outlines a problem that can arise when generic
+instantiations cross multiple different modules:
+
+.. code-block:: nim
+
+  # module A
+  proc genericA*[T](x: T) =
+    mixin init
+    init(x)
+
+
+.. code-block:: nim
+
+  import C
+
+  # module B
+  proc genericB*[T](x: T) =
+    # Without the `bind init` statement C's init proc is
+    # not available when `genericB` is instantiated:
+    bind init
+    genericA(x)
+
+.. code-block:: nim
+
+  # module C
+  type O = object
+  proc init*(x: var O) = discard
+
+.. code-block:: nim
+
+  # module main
+  import B, C
+
+  genericB O()
+
+In module B has an `init` proc from module C in its scope that is not
+taken into account when `genericB` is instantiated which leads to the
+instantiation of `genericA`. The solution is to `forward`:idx these
+symbols by a `bind` statement inside `genericB`.
+
+
 Templates
 =========
 
@@ -6607,6 +6651,14 @@ with the project:
 **Note**: Nim computes a SHA1 checksum and only recompiles the file if it
 has changed. One can use the ``-f`` command line option to force recompilation
 of the file.
+
+Since 1.4 the `compile` pragma is also available with this syntax:
+
+.. code-block:: Nim
+  {.compile("myfile.cpp", "--custom flags here").}
+
+As can be seen in the example, this new variant allows for custom flags
+that are passed to the C compiler when the file is recompiled.
 
 
 Link pragma

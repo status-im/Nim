@@ -86,6 +86,7 @@ proc symChoice(c: PContext, n: PNode, s: PSym, r: TSymChoiceRule;
       a = nextOverloadIter(o, c, n)
 
 proc semBindStmt(c: PContext, n: PNode, toBind: var IntSet): PNode =
+  result = copyNode(n)
   for i in 0..<n.len:
     var a = n[i]
     # If 'a' is an overloaded symbol, we used to use the first symbol
@@ -99,16 +100,24 @@ proc semBindStmt(c: PContext, n: PNode, toBind: var IntSet): PNode =
       let sc = symChoice(c, n, s, scClosed)
       if sc.kind == nkSym:
         toBind.incl(sc.sym.id)
+        result.add sc
       else:
-        for x in items(sc): toBind.incl(x.sym.id)
+        for x in items(sc):
+          toBind.incl(x.sym.id)
+          result.add x
     else:
       illFormedAst(a, c.config)
-  result = newNodeI(nkEmpty, n.info)
 
 proc semMixinStmt(c: PContext, n: PNode, toMixin: var IntSet): PNode =
+  result = copyNode(n)
+  var count = 0
   for i in 0..<n.len:
     toMixin.incl(considerQuotedIdent(c, n[i]).id)
-  result = newNodeI(nkEmpty, n.info)
+    let x = symChoice(c, n[i], nil, scForceOpen)
+    inc count, x.len
+    result.add x
+  if count == 0:
+    result = newNodeI(nkEmpty, n.info)
 
 proc replaceIdentBySym(c: PContext; n: var PNode, s: PNode) =
   case n.kind

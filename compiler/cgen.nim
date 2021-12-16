@@ -432,8 +432,14 @@ proc constructLoc(p: BProc, loc: var TLoc, isTemp = false) =
   if optSeqDestructors in p.config.globalOptions and skipTypes(typ, abstractInst + {tyStatic}).kind in {tyString, tySequence}:
     linefmt(p, cpsStmts, "$1.len = 0; $1.p = NIM_NIL;$n", [rdLoc(loc)])
   elif not isComplexValueType(typ):
-    linefmt(p, cpsStmts, "$1 = ($2)0;$n", [rdLoc(loc),
-      getTypeDesc(p.module, typ)])
+    if containsGarbageCollectedRef(loc.t):
+      var nilLoc: TLoc
+      initLoc(nilLoc, locTemp, loc.lode, OnStack)
+      nilLoc.r = rope("NIM_NIL")
+      genRefAssign(p, loc, nilLoc)
+    else:
+      linefmt(p, cpsStmts, "$1 = ($2)0;$n", [rdLoc(loc),
+        getTypeDesc(p.module, typ)])
   else:
     if not isTemp or containsGarbageCollectedRef(loc.t):
       # don't use nimZeroMem for temporary values for performance if we can
@@ -838,7 +844,8 @@ proc containsResult(n: PNode): bool =
     for i in 0..<n.safeLen:
       if containsResult(n[i]): return true
 
-const harmless = {nkConstSection, nkTypeSection, nkEmpty, nkCommentStmt, nkTemplateDef, nkMacroDef} +
+const harmless = {nkConstSection, nkTypeSection, nkEmpty, nkCommentStmt, nkTemplateDef,
+                  nkMacroDef, nkMixinStmt, nkBindStmt} +
                   declarativeDefs
 
 proc easyResultAsgn(n: PNode): PNode =
