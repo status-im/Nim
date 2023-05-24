@@ -91,8 +91,8 @@ type
   WalkOp = enum
     waMarkGlobal,    # part of the backup/debug mark&sweep
     waMarkPrecise,   # part of the backup/debug mark&sweep
-    waZctDecRef, waPush
-    #, waDebug
+    waZctDecRef, waPush,
+    waDebug
 
   Finalizer {.compilerproc.} = proc (self: pointer) {.nimcall, benign, raises: [].}
     # A ref type can have a finalizer that is called before the object's
@@ -138,6 +138,9 @@ type
     region: MemRegion        # garbage collected region
     stat: GcStat
     marked: CellSet
+    dumpMode: bool
+    dumpData: string
+    dumpDataLength: int
     additionalRoots: CellSeq # dummy roots for GC_ref/unref
     when hasThreadSupport:
       toDispose: SharedList[pointer]
@@ -624,9 +627,27 @@ proc sweep(gch: var GcHeap) =
       var c = cast[PCell](x)
       if c notin gch.marked: freeCyclicCell(gch, c)
 
+template xxxxx(m, c) =
+  when defined(nimTypeNames):
+    if gch.dumpMode:
+      var typName: cstring = "nil"
+      if not c.typ.isNil and not c.typ.name.isNil:
+        typName = c.typ.name
+      gch.dumpDataLength += c_sprintf(cast[cstring](addr gch.dumpData[gch.dumpDataLength]), m)
+      gch.dumpDataLength += c_sprintf(cast[cstring](addr gch.dumpData[gch.dumpDataLength]), "%p,", cast[pointer](c))
+      for index in 0..<c.typ.name.len:
+        gch.dumpData[gch.dumpDataLength] =
+          if c.typ.name[index] == ',': '_'
+          else: c.typ.name[index]
+        gch.dumpDataLength.inc()
+
+      gch.dumpDataLength += c_sprintf(cast[cstring](addr gch.dumpData[gch.dumpDataLength]), ",%d,", getCellSize(c))
+      forAllChildren(c, waDebug)
+      gch.dumpDataLength += c_sprintf(cast[cstring](addr gch.dumpData[gch.dumpDataLength - 1]), "\n") - 1
 proc markS(gch: var GcHeap, c: PCell) =
   gcAssert isAllocatedPtr(gch.region, c), "markS: foreign heap root detected A!"
   incl(gch.marked, c)
+  xxxxx("1,", c)
   gcAssert gch.tempStack.len == 0, "stack not empty!"
   forAllChildren(c, waMarkPrecise)
   while gch.tempStack.len > 0:
@@ -634,6 +655,7 @@ proc markS(gch: var GcHeap, c: PCell) =
     var d = gch.tempStack.d[gch.tempStack.len]
     gcAssert isAllocatedPtr(gch.region, d), "markS: foreign heap root detected B!"
     if not containsOrIncl(gch.marked, d):
+      xxxxx("2,", d)
       forAllChildren(d, waMarkPrecise)
 
 proc markGlobals(gch: var GcHeap) {.raises: [].} =
@@ -686,7 +708,8 @@ proc doOperation(p: pointer, op: WalkOp) =
     markS(gch, c)
   of waMarkPrecise:
     add(gch.tempStack, c)
-  #of waDebug: debugGraph(c)
+  of waDebug:
+    gch.dumpDataLength += c_sprintf(cast[cstring](addr gch.dumpData[gch.dumpDataLength]), "%p,", cast[pointer](c))
 
 proc nimGCvisit(d: pointer, op: int) {.compilerRtl.} =
   doOperation(d, WalkOp(op))
@@ -844,6 +867,26 @@ proc collectCT(gch: var GcHeap) =
       markForDebug(gch)
     collectCTBody(gch)
     gch.zctThreshold = max(InitialZctThreshold, gch.zct.len * CycleIncrease)
+
+proc GC_dumpCells*(): string =
+  var oldThreshold = gch.cycleThreshold
+  gch.cycleThreshold = 0 # forces cycle collection
+  collectCT(gch)
+  gch.cycleThreshold = oldThreshold
+
+  let cellsCount = gch.marked.counter + 1
+  gch.dumpData = newString(cellsCount * 10000)
+  gch.dumpDataLength = 0
+
+  gch.dumpMode = true
+  gch.cycleThreshold = 0 # forces cycle collection
+  collectCT(gch)
+  gch.cycleThreshold = oldThreshold
+  gch.dumpMode = false
+
+  result = gch.dumpData
+  result.setLen(gch.dumpDataLength)
+  gch.dumpData = ""
 
 proc GC_collectZct*() =
   ## Collect the ZCT (zero count table). Unstable, experimental API for

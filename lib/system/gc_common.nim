@@ -74,6 +74,19 @@ when defined(nimTypeNames):
 
     outOfMemHook = oomhandler
 
+template getCellSize(cell): untyped =
+  when defined(nimTypeNames):
+    if cell.typ.kind in {tyString, tySequence}:
+      let cap = cast[PGenericSeq](cellToUsr(cell)).space
+      let size =
+        if cell.typ.kind == tyString:
+          cap + 1 + GenericSeqSize
+        else:
+          align(GenericSeqSize, cell.typ.base.align) + cap * cell.typ.base.size
+      size+sizeof(Cell)
+    else:
+      cell.typ.base.size+sizeof(Cell)
+
 template decTypeSize(cell, t) =
   when defined(nimTypeNames):
     if t.kind in {tyString, tySequence}:
